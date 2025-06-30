@@ -1,56 +1,100 @@
-import requests
-import pandas as pd
 import re
-from transformers import RobertaTokenizer, RobertaModel
-import torch
+import requests
 import numpy as np
+import pandas as pd
+import torch
+import torch.nn as nn
+from transformers import RobertaTokenizer, RobertaModel
 
-# Load tokenizer & model
-tokenizer = RobertaTokenizer.from_pretrained('roberta-base')
-model = RobertaModel.from_pretrained('roberta-base')
-model.eval()
+# Load RoBERTa base encoder
+_tokenizer = RobertaTokenizer.from_pretrained('roberta-base')
+_encoder = RobertaModel.from_pretrained('roberta-base')
+_encoder.eval()
 
-def fetch_reviews(product_url: str) -> pd.DataFrame:
-    resp = requests.get(
+# Optional: Placeholder for alternative model
+# e.g., aura-7b for future high-capacity deployment
+# _encoder = SomeAura7BWrapper.load_pretrained('aura-7b')
+
+class ReviewScorer(nn.Module):
+    def __init__(self, embedding_dim=768, engineered_dim=4):
+        super().__init__()
+        self.fusion_dim = embedding_dim + engineered_dim
+        self.regression_head = nn.Sequential(
+            nn.Linear(self.fusion_dim, 128),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(128, 1)
+        )
+
+    def forward(self, cls_embedding, engineered_features):
+        x = torch.cat([cls_embedding, engineered_features], dim=1)
+        score = self.regression_head(x)
+        return score
+
+
+_scorer = ReviewScorer()
+
+
+def _fetch_reviews(url: str) -> pd.DataFrame:
+    r = requests.get(
         'http://localhost:5000/',
-        params={'url': product_url}, timeout=30
+        params={'url': url},
+        timeout=30
     )
-    data = resp.json()
-    df = pd.DataFrame(data)
+    df = pd.DataFrame(r.json())
     return df
 
-# Text cleaning
-def clean_text(text: str) -> str:
-    text = text.lower()
-    text = re.sub(r'<.*?>', '', text)
+
+def _clean(text: str) -> str:
+    text = re.sub(r'<.*?>', '', text.lower())
     text = re.sub(r'[^\w\s]', '', text)
     return text.strip()
 
-# Transform & extract features
-def score_text(text: str) -> float:
-    inputs = tokenizer(clean_text(text),
-                       return_tensors='pt', truncation=True, padding=True)
-    with torch.no_grad():
-        outputs = model(**inputs)
-    cls_emb = outputs.last_hidden_state[:, 0].numpy()
-    raw = np.linalg.norm(cls_emb)
-    # Calibrate raw to 0-100
-    calibrated = min(100, max(0, (raw - 5) * 12))
-    return float(calibrated)
 
-# Additional engineered features
-def extra_features(df: pd.DataFrame) -> pd.DataFrame:
+def _encode(text: str) -> np.ndarray:
+    tokens = _tokenizer(
+        _clean(text),
+        return_tensors='pt',
+        truncation=True,
+        padding=True
+    )
+    with torch.no_grad():
+        output = _encoder(**tokens)
+    cls = output.last_hidden_state[:, 0]
+    return cls
+
+
+def _engineer(df: pd.DataFrame) -> pd.DataFrame:
     df['length'] = df['content'].apply(len)
-    keywords = ['best ever', 'must buy']
+    df['uppercase_ratio'] = df['content'].apply(
+        lambda t: sum(1 for c in t if c.isupper()) / max(1, len(t))
+    )
     df['keyword_flag'] = df['content'].apply(
-        lambda t: any(k in t.lower() for k in keywords)
+        lambda t: any(k in t.lower() for k in ['best ever', 'must buy'])
+    ).astype(int)
+    df['punctuation_count'] = df['content'].apply(
+        lambda t: len(re.findall(r'[!?]', t))
     )
     return df
 
-# Full pipeline
-def process_reviews(url: str) -> pd.DataFrame:
-    df = fetch_reviews(url)
-    df = extra_features(df)
-    df['score'] = df['content'].apply(score_text)
-    df['flagged'] = df['score'] >= 70
+
+def process_reviews(product_url: str) -> pd.DataFrame:
+    df = _fetch_reviews(product_url)
+    df = _engineer(df)
+
+    scores = []
+    for _, row in df.iterrows():
+        cls_emb = _encode(row['content'])
+        engineered = torch.tensor(
+            [[row['length'], row['uppercase_ratio'],
+              row['keyword_flag'], row['punctuation_count']]],
+            dtype=torch.float32
+        )
+        raw_score = _scorer(cls_emb, engineered)
+        calibrated = torch.clamp((raw_score - 4.5) * 15, 0, 100).item()
+        scores.append(calibrated)
+
+    df['likelihood'] = scores
+    df['flagged'] = df['likelihood'] >= 70
     return df
+
