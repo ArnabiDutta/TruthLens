@@ -1,8 +1,14 @@
 # TruthLens: A Scalable AI System for Detecting Fake Reviews and Counterfeit Products
 
+
+
+
 ## Overview
 
 TruthLens is an open-source, AI-powered pipeline that enables independent detection of deceptive product reviews and counterfeit listings on major e-commerce marketplaces. In an ecosystem overwhelmed by manipulation and restricted data access, TruthLens delivers reproducible, auditable, and technically rigorous review authenticity scoring.
+
+## Demo
+https://github.com/user-attachments/assets/5cc2b815-f20d-4735-a6a2-04e021e7a97d
 
 ## Motivation
 
@@ -25,7 +31,7 @@ TruthLens is an open-source, AI-powered pipeline that enables independent detect
 * **Transformer-Based Semantic Analysis:** Fine-tuned RoBERTa encoder captures contextual signals of deception.
 * **Hybrid Feature Engineering:** Combines deep language embeddings with explicit anomaly detectors.
 * **Composite Trust Metrics:** Each review is scored on a 0–100 fake-likelihood scale. Product-level fake ratios translate to human-readable trust grades (A–F).
-* **Multi-Channel Delivery:** Accessible via a web dashboard and Chrome browser extension for real-time on-page verification.
+* **UI:** Accessible via a web dashboard.
 
 ## Technical Architecture
 
